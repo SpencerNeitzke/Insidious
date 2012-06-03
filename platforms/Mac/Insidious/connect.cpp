@@ -27,7 +27,7 @@ void SocketConnect::openSocket() {
 	struct hostent *hPtr;
 
 	char *remoteHost = "173.26.250.104";
-	int portNumber = 5555;
+	int portNumber = 55555;
     
 	bzero(&remoteSocketInfo, sizeof(sockaddr_in));  // Clear structure memory
     
