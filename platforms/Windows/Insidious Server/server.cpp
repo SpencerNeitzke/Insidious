@@ -34,7 +34,7 @@ int main()
 	SOCKADDR_IN serverInf;
 	serverInf.sin_family=AF_INET;
 	serverInf.sin_addr.s_addr=INADDR_ANY;
-	serverInf.sin_port=htons(8888);
+	serverInf.sin_port=htons(55555);
 
 	if(bind(Socket,(SOCKADDR*)(&serverInf),sizeof(serverInf))==SOCKET_ERROR)
 	{
