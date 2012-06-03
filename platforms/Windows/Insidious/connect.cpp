@@ -1,43 +1,63 @@
-#pragma comment(lib, "ws2_32.lib")
+#include <iostream>
 #include <winsock2.h>
+#pragma comment(lib,"ws2_32.lib")
 
-int main() {
-
-	WSADATA wsaData;
-	WORD version;
-	int error;
-
-	version = MAKEWORD(2, 0);
-
-	error = WSAStartup(version, &wsaData);
-
-	if ( error != 0 )
+int main()
+{
+	
+	WSADATA WsaDat;
+	if(WSAStartup(MAKEWORD(2,2),&WsaDat)!=0)
 	{
-		return FALSE;
-	}
-
-	if ( LOBYTE( wsaData.wVersion ) != 2 ||
-		 HIBYTE( wsaData.wVersion ) != 0 )
-	{
+		std::cout<<"Winsock error - Winsock initialization failed\r\n";
 		WSACleanup();
-		return FALSE;
+		system("PAUSE");
+		return 0;
+	}
+	
+	
+	SOCKET Socket=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+	if(Socket==INVALID_SOCKET)
+	{
+		std::cout<<"Winsock error - Socket creation Failed!\r\n";
+		WSACleanup();
+		system("PAUSE");
+		return 0;
 	}
 
-	SOCKET client;
-
-	client = socket( AF_INET, SOCK_STREAM, 0 );
-
-	sockaddr_in sin;
-
-	memset( &sin, 0, sizeof sin );
-
-	sin.sin_family = AF_INET;
-	sin.sin_addr.s_addr = inet_addr("173.26.250.104");
-	sin.sin_port = htons(5555);
-
-	if ( connect(client, (SOCKADDR*)(&sin), sizeof sin ) == SOCKET_ERROR ){
-		return FALSE;
+	
+	struct hostent *host;
+	if((host=gethostbyname("localhost"))==NULL)
+	{
+		std::cout<<"Failed to resolve hostname.\r\n";
+		WSACleanup();
+		system("PAUSE");
+		return 0;
 	}
 
+	
+	SOCKADDR_IN SockAddr;
+	SockAddr.sin_port=htons(8888);
+	SockAddr.sin_family=AF_INET;
+	SockAddr.sin_addr.s_addr=*((unsigned long*)host->h_addr);
 
+	if(connect(Socket,(SOCKADDR*)(&SockAddr),sizeof(SockAddr))!=0)
+	{
+		std::cout<<"Failed to establish connection with server\r\n";
+		WSACleanup();
+		system("PAUSE");
+		return 0;
+	}
+	
+	
+	char buffer[1000];
+	memset(buffer,0,999);
+	int inDataLength=recv(Socket,buffer,1000,0);
+	std::cout<<buffer;
+
+	
+	shutdown(Socket,SD_SEND);
+	closesocket(Socket);
+	WSACleanup();
+	system("PAUSE");
+	return 0;
 }

@@ -1,56 +1,68 @@
-#pragma comment(lib, "ws2_32.lib")
-
-#include <winsock2.h>
 #include <iostream>
+#include <winsock2.h>
+#include <process.h>
+#include <stdio.h>
+#pragma comment(lib,"ws2_32.lib")
 
-using namespace std;
+void client(void* sock) {
+	SOCKET Socket = (SOCKET)sock;
+	std::cout<<"Client connected!\r\n\r\n";
+	char *szMessage="Welcome to the server!\r\n";
+	send(Socket,szMessage,strlen(szMessage),0);
+}
 
-int main() {
-	WSADATA wsaData;
-	WORD version;
-	int error;
-
-	version = MAKEWORD(2, 0);
-
-	error = WSAStartup(version, &wsaData);
-
-	if ( error != 0 )
+int main()
+{
+	WSADATA WsaDat;
+	if(WSAStartup(MAKEWORD(2,2),&WsaDat)!=0)
 	{
-		return FALSE;
-	}
-
-	if ( LOBYTE( wsaData.wVersion ) != 2 ||
-		 HIBYTE( wsaData.wVersion ) != 0 )
-	{
+		std::cout<<"WSA Initialization failed!\r\n";
 		WSACleanup();
-		return FALSE;
+		system("PAUSE");
+		return 0;
+	}
+	
+	SOCKET Socket=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+	if(Socket==INVALID_SOCKET)
+	{
+		std::cout<<"Socket creation failed.\r\n";
+		WSACleanup();
+		system("PAUSE");
+		return 0;
+	}
+	
+	SOCKADDR_IN serverInf;
+	serverInf.sin_family=AF_INET;
+	serverInf.sin_addr.s_addr=INADDR_ANY;
+	serverInf.sin_port=htons(8888);
+
+	if(bind(Socket,(SOCKADDR*)(&serverInf),sizeof(serverInf))==SOCKET_ERROR)
+	{
+		std::cout<<"Unable to bind socket!\r\n";
+		WSACleanup();
+		system("PAUSE");
+		return 0;
+	}
+
+	listen(Socket,1);
+	SOCKET TempSock=SOCKET_ERROR;
+
+
+	while(1){
+			TempSock=accept(Socket,NULL,NULL);
+			_beginthread(client, 0 , (void*)TempSock);
+			TempSock = NULL;
 	}
 
 
-	SOCKET server;
+	// Shutdown our socket
+	shutdown(Socket,SD_SEND);
 
-	server = socket(AF_INET, SOCK_STREAM, 0);
+	// Close our socket entirely
+	closesocket(Socket);
 
-	sockaddr_in sin;
-
-	sin.sin_family = AF_INET;
-	sin.sin_addr.s_addr = inet_addr("127.0.0.1");
-	sin.sin_port = htons(5555);
-
-	if (bind( server, (SOCKADDR*)&sin, sizeof(sin) ) == SOCKET_ERROR ){
-		return FALSE;
-	}
-
-	while ( listen( server, SOMAXCONN ) == SOCKET_ERROR );
-
-	SOCKET client;
-	int length;
-
-	while(1) {
-		length = sizeof sin;
-		client = accept( server, (SOCKADDR*)&sin, &length );
-		cout << "Client connected" << endl;
-		cout << "Sending Instructions..." << endl;
-	}
-
+	// Cleanup Winsock
+	WSACleanup();
+	system("PAUSE");
+	return 0;
 }
