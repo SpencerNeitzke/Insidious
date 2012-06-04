@@ -4,6 +4,7 @@
 //
 
 #include <iostream>
+#include <pthread.h>
 #import "connect.hpp"
 #import "usb.hpp"
 
@@ -22,7 +23,9 @@ int main (int argc, const char * argv[])
         // Could not establish new signal handler.
     }
     
-    SocketConnect::openSocket();
+    pthread_t socketThread;
+    pthread_create(&socketThread, NULL, &SocketConnect::openSocket, NULL);
+
     USBScanner *usb = new USBScanner();
     usb->scan();
     

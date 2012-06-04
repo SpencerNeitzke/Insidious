@@ -8,7 +8,7 @@
 
 class SocketConnect {
 public:
-    static void openSocket();
+    static void* openSocket(void* arg);
 };
 
 #endif
