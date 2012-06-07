@@ -65,13 +65,9 @@ void recv(void* sock) {
 		writer.String("os");
 		writer.StartObject();
 		writer.String("name");
-		char ver[50];
-		strcpy(ver, OS.c_str());
-		writer.String(ver);
+		writer.String(OS.c_str());
 		writer.String("resolution");
-		char res[50];
-		strcpy(res, resolution.c_str());
-		writer.String(res);
+		writer.String(resolution.c_str());
 		writer.EndObject();
 		writer.EndObject();
 
@@ -145,7 +141,7 @@ void recv(void* sock) {
 			// Send JSON response
             const char *jsonReply = s.GetString();
             send(Socket, jsonReply, strlen(jsonReply), 0);
-	}
+	} 
 
 	}
 
@@ -186,6 +182,6 @@ int main() {
 	}
 
 	// Start communication thread
-		while(_beginthread(recv, 0 , (void*)Socket));
+	recv((void*)Socket);
 	
 }

