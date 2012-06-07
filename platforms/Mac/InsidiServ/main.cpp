@@ -8,6 +8,7 @@
 #include <sys/types.h>   // Types used in sys/socket.h and netinet/in.h
 #include <netinet/in.h>  // Internet domain address structures and functions
 #include <sys/socket.h>  // Structures and functions used for socket API
+#include <arpa/inet.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string>
@@ -16,10 +17,27 @@
 #include "rapidjson/stringbuffer.h"
 #include "rapidjson/document.h"
 
+class Client {
+public:
+    Client(int socket) : clientSocket(socket) {}
+    int clientSocket;
+    std::string ipAddress;
+    rapidjson::Document details;
+    void setIPAddress(const char* source) {
+        ipAddress = std::string(source);
+    }
+    bool isConnected() {
+        socklen_t len;
+        struct sockaddr_storage address;
+        int resolveIP = getpeername(clientSocket, (struct sockaddr*)&address, &len);
+        return (resolveIP == 0);
+    }
+};
+
 using namespace std;
 static int stopListening = 0;
 static int socketHandle;
-static vector<int> clients;
+static vector<Client*> clients;
 
 // New connected clients are sent to this function
 static void *introduceClient(void* sock) {
@@ -37,7 +55,6 @@ static void *introduceClient(void* sock) {
     send(Socket, message, strlen(message), 0);
 
     // TODO: Add timeout
-    // TODO: Store client object with device information
     
     // Wait for response from client
     char buffer[1000] = "";
@@ -52,8 +69,33 @@ static void *introduceClient(void* sock) {
 
     if(document["res"].IsString()) {
         if(strcmp(document["res"].GetString(), "details") == 0) {
-            cout << "Got client info: " << buffer << "\n\n";
-            clients.push_back(Socket); // Store client
+            cout << "Client Connected" << endl << ">> ";
+            
+            // Find IP address of socket
+            struct sockaddr_storage addr;
+            socklen_t len = sizeof(addr);
+            char ipstr[INET6_ADDRSTRLEN];
+            int port;
+            int resolveIP = getpeername(Socket, (struct sockaddr*)&addr, &len);
+            if(resolveIP < 0) return 0; // Socket down?
+            
+            // deal with both IPv4 and IPv6
+            if (addr.ss_family == AF_INET) {
+                struct sockaddr_in *s = (struct sockaddr_in *)&addr;
+                port = ntohs(s->sin_port);
+                inet_ntop(AF_INET, &s->sin_addr, ipstr, sizeof ipstr);
+            } else { // AF_INET6
+                struct sockaddr_in6 *s = (struct sockaddr_in6 *)&addr;
+                port = ntohs(s->sin6_port);
+                inet_ntop(AF_INET6, &s->sin6_addr, ipstr, sizeof ipstr);
+            }
+
+            // Store this client
+            Client* newClient = new Client(Socket);
+            newClient->details = document;
+            newClient->setIPAddress(ipstr);
+            clients.push_back(newClient);
+            
             return 0; // All good to go, end it here
         }
     }
@@ -115,7 +157,7 @@ static void executeClientCommand(const char *cmd, int* socketInput) {
     ssize_t receivedMsg;
     
     // Receive data
-    char buffer[1024*1024] = "";
+    char buffer[1024] = "";
     while(1) {
         receivedMsg = recv(Socket, buffer, sizeof(buffer), 0);
         if(receivedMsg <= 0) break;
@@ -136,6 +178,48 @@ static void executeClientCommand(const char *cmd, int* socketInput) {
     if(document["res"].IsString()) {
         if(strcmp(document["res"].GetString(), "execute") == 0) {
             cout << "Got command result: " << document["cmd"].GetString() << endl;
+        }
+    }
+}
+
+static void shutdownClientCommand(const char *cmd, int* socketInput) {
+    int* data = reinterpret_cast<int*>(socketInput);
+    int Socket = *data;
+    
+    rapidjson::StringBuffer s;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(s);
+    writer.StartObject();
+    writer.String("req");
+    writer.String("shutdown");
+    writer.String("msg");
+    writer.String(cmd);
+    writer.EndObject();
+    const char *message = s.GetString();
+    send(Socket, message, strlen(message), 0);
+    ssize_t receivedMsg;
+    
+    // Receive data
+    char buffer[1024] = "";
+    while(1) {
+        receivedMsg = recv(Socket, buffer, sizeof(buffer), 0);
+        if(receivedMsg <= 0) break;
+    }
+    
+    if(receivedMsg <= 0) {
+        cout << "Received an error when reading from client. Not sure if the command was executed successfully.\n";
+        return; // Ignore errors
+    }
+    
+    // Got message, parse the JSON
+    rapidjson::Document document;
+    if (document.Parse<0>(buffer).HasParseError()) {
+        cout << "Error parsing reply from client. Not sure if the command was executed successfully.\n";
+        return; // Skip if error parsing
+    }
+    
+    if(document["res"].IsString()) {
+        if(strcmp(document["res"].GetString(), "shutdown") == 0) {
+            cout << "Got shutdown result: " << document["out"].GetString() << endl;
         }
     }
 }
@@ -200,7 +284,7 @@ int main()
             cout << "   execute         Args: [id] [cmd]. Runs a given command on a given client\n";
             cout << "   listen          Begin listening for connections\n";
             cout << "   list clients    Lists all connected clients\n";
-            cout << "   shutdown        Args: [id]. Immediately shuts down the computer of a given client\n";
+            cout << "   shutdown        Args: [id] [message]. Immediately shuts down the computer of a given client\n";
             cout << "   update          Args: [id]. Request a client to send its device details and save that info.\n";
             cout << "   exit            Stop the server, and close any open sockets\n";
         } else if(input == "listen") {
@@ -209,7 +293,13 @@ int main()
         } else if(input == "list clients") {
             cout << clients.size() << " client" << ((clients.size() != 1) ? "s" : "") << " connected.\n";
             for(std::vector<int>::size_type i = 0; i != clients.size(); i++) {
-                cout << "   Client #" << i << endl;
+                Client *c = clients[i];
+                const char *ipAddress = c->ipAddress.c_str();
+                const char *osString = c->details["os"]["name"].GetString();
+                const char *osVersion = c->details["os"]["version"].GetString();
+                cout << "   Client #" << i << " - ";
+                cout << ipAddress << "; " << osString << " " << osVersion;
+                cout << "\n";
             }
         } else if(input.compare(0, std::string("client info").length(), std::string("client info")) == 0) {
             if(args.size() != 3) {
@@ -219,7 +309,32 @@ int main()
             
             const char *argument = args[2].c_str();
             int clientID = atoi(argument);
-            // (To Do)
+            Client* clientObj;
+            
+            try {
+                clientObj = clients.at(clientID);
+            } catch(exception e) {
+                cout << "Error: Could not find a client with the given ID.\n";
+                continue;
+            }
+            
+            const char *isConnected = "Not Connected";
+            if(clientObj->isConnected()) {
+                isConnected = "Connected";
+            }
+            
+            const char *osName = clientObj->details["os"]["name"].GetString();
+            const char *osVersion = clientObj->details["os"]["version"].GetString();
+            const char *hwResolution = clientObj->details["os"]["resolution"].GetString();
+            const char *compName = clientObj->details["os"]["computerName"].GetString();
+            const char *currentUser = clientObj->details["os"]["currentUser"].GetString();
+            
+            cout << "Client Info: #" << clientID << " (" << isConnected << ") \n";
+            cout << "   Computer Name: " << compName << "\n";
+            cout << "   Logged on user: " << currentUser << "\n";
+            cout << "   IP Address (Remote): " << clientObj->ipAddress.c_str() << "\n";
+            cout << "   Operating System: " << osName << " " << osVersion << "\n";
+            cout << "   Screen Resolution: " << hwResolution << "\n";
         } else if(input.compare(0, std::string("execute").length(), std::string("execute")) == 0) {
             if(args.size() != 3) {
                 cout << "Usage: execute [clientID] [command]. Get clientID from 'list clients'.\n";
@@ -228,19 +343,36 @@ int main()
             
             const char *argument = args[1].c_str();
             int clientID = atoi(argument);
-            int clientSocket;
+            Client* clientObj;
             
             try {
-                clientSocket = clients.at(clientID);
+                clientObj = clients.at(clientID);
             } catch(exception e) {
                 cout << "Error: Could not find a client with the given ID.\n";
                 continue;
             }
             
             cout << "Sending execute request to Client #" << clientID << "...\n";
-            executeClientCommand(args[2].c_str(), new int(clients[clientID]));
+            executeClientCommand(args[2].c_str(), new int(clientObj->clientSocket));
         } else if(input.compare(0, std::string("shutdown").length(), std::string("shutdown")) == 0) {
+            if(args.size() != 3) {
+                cout << "Usage: shutdown [clientID] [message]. Get clientID from 'list clients'.\n";
+                continue;
+            }
             
+            const char *argument = args[1].c_str();
+            int clientID = atoi(argument);
+            Client* clientObj;
+            
+            try {
+                clientObj = clients.at(clientID);
+            } catch(exception e) {
+                cout << "Error: Could not find a client with the given ID.\n";
+                continue;
+            }
+            
+            cout << "Sending shutdown request to Client #" << clientID << "...\n";
+            shutdownClientCommand(args[2].c_str(), new int(clientObj->clientSocket));
         } else if(input == "exit") {
             stopListening = 1;
             if(socketHandle) {
